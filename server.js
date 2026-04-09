@@ -3,7 +3,7 @@ const bodyParser = require('body-parser');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
-const multer = require('multer'); // ספרייה לטיפול בהעלאת קבצים
+const multer = require('multer');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -15,11 +15,10 @@ if (!fs.existsSync(UPLOADS_DIR)) {
     fs.mkdirSync(UPLOADS_DIR);
 }
 
-// הגדרת אחסון קבצים
+// הגדרת אחסון קבצים ל-Multer
 const storage = multer.diskStorage({
     destination: (req, file, cb) => cb(null, UPLOADS_DIR),
     filename: (req, file, cb) => {
-        // שמירה בשם קבוע לפי סוג ההודעה כדי להחליף קבצים קיימים
         const ext = path.extname(file.originalname);
         const fileName = req.body.fileType === 'welcome' ? 'welcome' : 'transition';
         cb(null, fileName + ext);
@@ -27,11 +26,11 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage: storage });
 
-// --- Database Management ---
+// --- מסד נתונים ---
 let db = {
     settings: {
-        welcomeFileName: '',      // שם הקובץ בשרת שלנו
-        transitionFileName: '',   // שם קובץ המעבר
+        welcomeFileName: '',      
+        transitionFileName: '',   
         defaultRoute: { type: 'folder', destination: '/5' }
     },
     quickOptions: [
@@ -43,7 +42,7 @@ let db = {
     pendingCalls: []
 };
 
-// טעינת נתונים
+// טעינת נתונים מקובץ
 if (fs.existsSync(DB_FILE)) {
     try {
         const savedData = JSON.parse(fs.readFileSync(DB_FILE));
@@ -61,12 +60,11 @@ function saveDB() {
 app.use(cors());
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
-// חשיפת תיקיית הקבצים לאינטרנט כדי שימות המשיח יוכלו להוריד אותם
 app.use('/uploads', express.static(UPLOADS_DIR));
 
 let activePendingCalls = {};
 
-// בניית תשובה לימות המשיח המבוססת על קבצים מהשרת שלנו
+// עיבוד התגובה לימות המשיח (שמע + ניתוב)
 function formatYemotResponse(req, type, destination, isTransition = false) {
     let cmd = "";
     if (type === 'sip') {
@@ -78,18 +76,16 @@ function formatYemotResponse(req, type, destination, isTransition = false) {
         cmd = `routing_yemot=${destination}`;
     }
     
-    // יצירת כתובת URL מלאה לקובץ השמע בשרת שלנו
-    const protocol = req.protocol;
+    // זיהוי HTTPS ב-Render למניעת תקלות אבטחה
+    const protocol = req.headers['x-forwarded-proto'] || req.protocol;
     const host = req.get('host');
     const fileName = isTransition ? db.settings.transitionFileName : db.settings.welcomeFileName;
     
     let audioCmd = "";
     if (fileName) {
-        // h- אומר לימות המשיח להוריד קובץ מכתובת HTTP חיצונית
         const fileUrl = `${protocol}://${host}/uploads/${fileName}`;
         audioCmd = `id_list_message=h-${fileUrl}`;
     } else {
-        // ברירת מחדל אם אין קובץ
         audioCmd = `id_list_message=t-אנא_המתן_השיחה_מועברת`;
     }
 
@@ -102,7 +98,7 @@ function updatePendingList() {
     }));
 }
 
-// 1. Webhook Endpoint
+// Webhook לקבלת שיחות
 app.all('/yemot_webhook', (req, res) => {
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     const apiPhone = req.query.ApiPhone || req.body.ApiPhone || 'חסוי';
@@ -134,7 +130,7 @@ app.all('/yemot_webhook', (req, res) => {
     updatePendingList();
 });
 
-// 2. API Routes
+// API Routes
 app.get('/api/data', (req, res) => res.json(db));
 app.post('/api/settings', (req, res) => { db.settings = req.body.settings; saveDB(); res.json({ success: true }); });
 app.post('/api/contacts', (req, res) => { const { phone, name, routeType, destination } = req.body; db.contacts[phone] = { name, routeType, destination }; saveDB(); res.json({ success: true }); });
@@ -142,7 +138,7 @@ app.delete('/api/contacts/:phone', (req, res) => { delete db.contacts[req.params
 
 // API להעלאת קבצים
 app.post('/api/upload', upload.single('audioFile'), (req, res) => {
-    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    if (!req.file) return res.status(400).json({ error: 'לא נבחר קובץ' });
     
     if (req.body.fileType === 'welcome') {
         db.settings.welcomeFileName = req.file.filename;
@@ -168,7 +164,7 @@ app.post('/api/resolve_call', (req, res) => {
     } else { res.json({ success: false }); }
 });
 
-// 3. UI Interface
+// ממשק HTML
 app.get('/', (req, res) => {
     res.send(`
 <!DOCTYPE html>
@@ -203,7 +199,6 @@ app.get('/', (req, res) => {
 
     <div id="toast" class="toast-notify bg-indigo-600">פעולה בוצעה</div>
 
-    <!-- פופ-אפ שיחה נכנסת -->
     <div id="incomingPopup" class="fixed inset-0 bg-slate-900/90 z-[100] hidden items-center justify-center backdrop-blur-xl transition-all duration-500">
         <div class="bg-white rounded-[4rem] shadow-2xl p-12 w-[34rem] text-center border-4 border-indigo-600 relative">
             <div class="absolute top-0 left-0 w-full h-4 bg-slate-100 rounded-t-[4rem] overflow-hidden"><div id="popupProgress" class="bg-indigo-600 h-full w-full transition-all duration-100 linear"></div></div>
@@ -215,7 +210,6 @@ app.get('/', (req, res) => {
     </div>
 
     <div class="max-w-7xl mx-auto">
-        <!-- Header -->
         <header class="flex flex-col lg:flex-row justify-between items-center mb-12 gap-6">
             <div class="flex items-center gap-6">
                 <div class="bg-indigo-600 w-16 h-16 rounded-2xl flex items-center justify-center shadow-2xl shadow-indigo-100 rotate-3">
@@ -235,14 +229,9 @@ app.get('/', (req, res) => {
         </header>
 
         <div class="grid grid-cols-1 lg:grid-cols-12 gap-10">
-            
-            <!-- Left Sidebar -->
             <div class="lg:col-span-4 space-y-8">
-                
-                <!-- ניהול קבצי שמע -->
                 <section class="premium-card p-8 bg-indigo-50/50 border-indigo-100 shadow-lg">
                     <h2 class="text-xs font-black text-indigo-900 uppercase mb-6 tracking-widest border-b border-indigo-100 pb-2">ניהול קבצי שמע בשרת</h2>
-                    
                     <div class="space-y-6">
                         <div>
                             <label class="block text-[10px] font-black text-slate-500 mb-2 uppercase">הודעת פתיחה (פופ-אפ)</label>
@@ -250,7 +239,7 @@ app.get('/', (req, res) => {
                             <button onclick="document.getElementById('fileWelcome').click()" class="w-full bg-white border-2 border-dashed border-indigo-300 p-4 rounded-xl text-xs font-bold hover:bg-indigo-100 transition">
                                 בחר הודעת פתיחה
                             </button>
-                            <div id="statusWelcome" class="file-status">ממתין להעלאה...</div>
+                            <div id="statusWelcome" class="file-status">לא הוגדר קובץ</div>
                         </div>
 
                         <div>
@@ -259,12 +248,11 @@ app.get('/', (req, res) => {
                             <button onclick="document.getElementById('fileTransition').click()" class="w-full bg-white border-2 border-dashed border-indigo-300 p-4 rounded-xl text-xs font-bold hover:bg-indigo-100 transition">
                                 בחר הודעת מעבר
                             </button>
-                            <div id="statusTransition" class="file-status">ממתין להעלאה...</div>
+                            <div id="statusTransition" class="file-status">לא הוגדר קובץ</div>
                         </div>
                     </div>
                 </section>
 
-                <!-- חיבור כללי -->
                 <section class="premium-card p-8">
                     <h2 class="text-xs font-black text-slate-400 uppercase mb-6 tracking-widest border-b border-slate-100 pb-2">הגדרות חיבור</h2>
                     <div class="space-y-4">
@@ -281,9 +269,7 @@ app.get('/', (req, res) => {
                 </section>
             </div>
 
-            <!-- Right Content -->
             <div class="lg:col-span-8 space-y-10">
-                <!-- חיוג גישור מהיר -->
                 <section class="premium-card p-10 bg-slate-900 text-white border-none shadow-2xl relative overflow-hidden">
                     <div class="absolute top-0 right-0 w-32 h-32 bg-indigo-600/10 rounded-full -mr-16 -mt-16 blur-3xl"></div>
                     <div class="flex flex-col md:flex-row gap-6 items-end relative z-10">
@@ -295,7 +281,6 @@ app.get('/', (req, res) => {
                     </div>
                 </section>
 
-                <!-- טבלת CRM -->
                 <section class="premium-card overflow-hidden">
                     <div class="p-10 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
                         <h2 class="text-2xl font-black tracking-tighter">לקוחות וניתובים</h2>
@@ -314,15 +299,14 @@ app.get('/', (req, res) => {
 
                     <div class="overflow-x-auto">
                         <table class="w-full text-right">
-                            <thead class="bg-slate-50 text-slate-400 font-black uppercase text-[10px] tracking-[0.2em] border-b">
-                                <tr><th class="p-8 px-10">שם לקוח</th><th class="p-8">טלפון</th><th class="p-8">ניתוב קבוע</th><th class="p-8 text-left">ניהול</th></tr>
+                            <thead class="bg-slate-50 text-slate-400 font-black uppercase text-[10px] tracking-widest border-b">
+                                <tr><th class="p-8 px-10">לקוח</th><th class="p-8">מספר</th><th class="p-8">ניתוב קבוע</th><th class="p-8 text-left">פעולה</th></tr>
                             </thead>
                             <tbody id="contactsList" class="divide-y divide-slate-100"></tbody>
                         </table>
                     </div>
                 </section>
 
-                <!-- הגדרות ניתוב אוטומטי -->
                 <section class="premium-card p-10">
                     <h2 class="text-xs font-black text-slate-400 uppercase mb-8 tracking-widest border-b pb-4 italic">Routing Configuration</h2>
                     <div class="flex gap-4">
@@ -337,11 +321,10 @@ app.get('/', (req, res) => {
                     </div>
                 </section>
 
-                <!-- לוג שיחות -->
                 <section class="premium-card p-10 bg-slate-900 border-4 border-slate-800 shadow-2xl">
-                    <h2 class="text-[11px] font-black text-slate-500 uppercase mb-8 tracking-[0.5em] flex justify-between items-center">
-                        <span>Traffic Monitor</span>
-                        <div class="flex gap-1"><span class="w-1.5 h-1.5 bg-blue-500 rounded-full animate-ping"></span></div>
+                    <h2 class="text-[11px] font-black text-slate-500 uppercase mb-8 tracking-[0.4em] flex justify-between items-center">
+                        <span>Live Activity Monitor</span>
+                        <span class="w-2 h-2 bg-blue-500 rounded-full animate-ping"></span>
                     </h2>
                     <div id="logsArea" class="h-64 overflow-y-auto space-y-4 font-mono text-[13px]"></div>
                 </section>
@@ -355,6 +338,8 @@ app.get('/', (req, res) => {
     </div>
 
     <script>
+        let currentSettings = { welcomeFileName: '', transitionFileName: '' };
+
         function showToast(msg, isError = false) {
             const t = document.getElementById('toast');
             t.innerText = msg;
@@ -380,6 +365,8 @@ app.get('/', (req, res) => {
                 if (data.success) {
                     status.innerText = "קובץ פעיל: " + data.fileName;
                     showToast("הקובץ הועלה בהצלחה!");
+                    if(type === 'welcome') currentSettings.welcomeFileName = data.fileName;
+                    if(type === 'transition') currentSettings.transitionFileName = data.fileName;
                 }
             } catch (e) {
                 status.innerText = "שגיאת העלאה";
@@ -392,14 +379,17 @@ app.get('/', (req, res) => {
                 const res = await fetch('/api/data');
                 const data = await res.json();
                 
+                if(data.settings) currentSettings = data.settings;
+
                 if(document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'SELECT') {
                     document.getElementById('globalToken').value = localStorage.getItem('y_token') || '';
                     document.getElementById('mySipExt').value = localStorage.getItem('y_sip') || '';
-                    document.getElementById('defType').value = data.settings.defaultRoute.type;
-                    document.getElementById('defDest').value = data.settings.defaultRoute.destination;
-                    
-                    if (data.settings.welcomeFileName) document.getElementById('statusWelcome').innerText = "קובץ פעיל: " + data.settings.welcomeFileName;
-                    if (data.settings.transitionFileName) document.getElementById('statusTransition').innerText = "קובץ פעיל: " + data.settings.transitionFileName;
+                    if(data.settings) {
+                        document.getElementById('defType').value = data.settings.defaultRoute?.type || 'folder';
+                        document.getElementById('defDest').value = data.settings.defaultRoute?.destination || '/5';
+                        if (data.settings.welcomeFileName) document.getElementById('statusWelcome').innerText = "קובץ פעיל: " + data.settings.welcomeFileName;
+                        if (data.settings.transitionFileName) document.getElementById('statusTransition').innerText = "קובץ פעיל: " + data.settings.transitionFileName;
+                    }
                 }
                 renderContacts(data.contacts);
                 renderLogs(data.callLogs);
@@ -412,7 +402,7 @@ app.get('/', (req, res) => {
             list.innerHTML = '';
             for(let phone in contacts) {
                 const c = contacts[phone];
-                list.innerHTML += \`<tr class="hover:bg-indigo-50/50 transition"><td class="p-8 px-10 font-black text-2xl text-slate-800 tracking-tight">\${c.name}</td><td class="p-8 font-mono text-slate-400 text-xl">\${phone}</td><td class="p-8 text-indigo-600 font-bold italic">\${c.routeType.toUpperCase()} &rarr; \${c.destination}</td><td class="p-8 text-left"><button onclick="deleteContact('\${phone}')" class="text-red-500 font-black hover:underline uppercase text-[10px]">Delete</button></td></tr>\`;
+                list.innerHTML += \`<tr class="hover:bg-indigo-50/50 transition"><td class="p-8 px-10 font-black text-2xl text-slate-800 tracking-tight">\${c.name}</td><td class="p-8 font-mono text-slate-400 text-xl">\${phone}</td><td class="p-8 text-indigo-600 font-bold italic">\${c.routeType.toUpperCase()} &rarr; \${c.destination}</td><td class="p-8 text-left"><button onclick="deleteContact('\${phone}')" class="text-red-500 font-black hover:bg-red-50 p-3 rounded-xl transition uppercase text-[10px]">Delete</button></td></tr>\`;
             }
         }
 
@@ -470,8 +460,8 @@ app.get('/', (req, res) => {
         async function saveSystemSettings() {
             const settings = {
                 settings: {
-                    welcomeFileName: db.settings.welcomeFileName,
-                    transitionFileName: db.settings.transitionFileName,
+                    welcomeFileName: currentSettings.welcomeFileName || '',
+                    transitionFileName: currentSettings.transitionFileName || '',
                     defaultRoute: { type: document.getElementById('defType').value, destination: document.getElementById('defDest').value }
                 }
             };
